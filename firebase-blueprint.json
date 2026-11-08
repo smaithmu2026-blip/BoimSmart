@@ -1,0 +1,29 @@
+{
+  "entities": {
+    "Quiz": {
+      "title": "Quiz Definition",
+      "description": "A generated quiz with questions and metadata.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "subject": { "type": "string", "maxLength": 100 },
+        "level": { "type": "string", "maxLength": 50 },
+        "gradeClass": { "type": "string", "maxLength": 50 },
+        "questions": {
+          "type": "array",
+          "description": "List of questions in the quiz."
+        },
+        "includeKey": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$" }
+      },
+      "required": ["title", "questions", "userId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/quizzes/{quizId}": {
+      "schema": "Quiz",
+      "description": "Stores quiz history for individual users."
+    }
+  }
+}

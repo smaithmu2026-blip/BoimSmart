@@ -1,0 +1,6 @@
+{
+  "name": "BoimSmart AI",
+  "description": "AI Exam Generator & Chatbot for Merdeka Curriculum and Riau Malay Culture (BMR).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

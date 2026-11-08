@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary: #6366f1;
+    --primary-foreground: #ffffff;
+    --background: #fdfdfd;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --border: #e2e8f0;
+    --accent: #f8fafc;
+    --accent-foreground: #6366f1;
+    --midnight: #020617;
+    --emerald: #10b981;
+    --cyan: #06b6d4;
+  }
+
+  body {
+    @apply font-['DM_Sans'] text-slate-900 antialiased bg-[#F8FAFC];
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-['Plus_Jakarta_Sans'] font-extrabold tracking-tight;
+  }
+}
+
+
+@layer utilities {
+  .premium-card {
+    @apply bg-white/70 backdrop-blur-md border border-slate-200/50 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] rounded-2xl transition-all duration-500;
+  }
+  .premium-card-hover {
+    @apply hover:shadow-[0_20px_40px_-12px_rgba(0,0,0,0.1)] hover:border-slate-300/60 hover:-translate-y-1;
+  }
+  .glass-sidebar {
+    @apply bg-slate-900/95 backdrop-blur-2xl border-r border-white/5;
+  }
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-br from-indigo-500 via-blue-600 to-emerald-500;
+  }
+  .bg-premium-gradient {
+    @apply bg-gradient-to-tr from-slate-50 via-white to-indigo-50/40;
+  }
+  .active-indicator {
+    @apply absolute left-0 w-1.5 h-6 bg-indigo-500 rounded-r-full;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-slate-300/40 rounded-full hover:bg-indigo-400/50 transition-colors;
+  }
+}
+
+
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  body {
+    background: white;
+    color: black;
+  }
+}
+
+/* Custom Markdown Table Styling */
+.prose table {
+  @apply w-full border-collapse border border-slate-300 my-4 text-[11px];
+  min-width: 500px;
+}
+.prose th {
+  @apply bg-slate-100 border border-slate-300 p-2 font-bold text-slate-700;
+}
+.prose td {
+  @apply border border-slate-300 p-2 text-slate-800;
+}
+.prose tr:nth-child(even) {
+  @apply bg-slate-50;
+}
+
+
