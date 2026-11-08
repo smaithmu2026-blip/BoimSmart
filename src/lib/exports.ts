@@ -7,17 +7,20 @@ import jsPDF from "jspdf";
 const BLACK = "000000";
 
 export async function exportToWord(quiz: Quiz) {
+  if (!quiz || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+    throw new Error("Tidak ada data soal untuk diekspor ke Word.");
+  }
   const docChildren: any[] = [];
 
   // Header
   docChildren.push(new Paragraph({
-    children: [new TextRun({ text: quiz.title.toUpperCase(), bold: true, size: 32, color: BLACK })],
+    children: [new TextRun({ text: (quiz.title || "SOAL UJIAN").toUpperCase(), bold: true, size: 32, color: BLACK })],
     alignment: AlignmentType.CENTER,
     spacing: { after: 200 }
   }));
 
   docChildren.push(new Paragraph({
-    children: [new TextRun({ text: `Mata Pelajaran: ${quiz.subject}  |  Kelas: ${quiz.gradeClass}`, bold: true, size: 20, color: BLACK })],
+    children: [new TextRun({ text: `Mata Pelajaran: ${quiz.subject || "-"}  |  Kelas: ${quiz.gradeClass || "-"}`, bold: true, size: 20, color: BLACK })],
     alignment: AlignmentType.CENTER,
     spacing: { after: 400 }
   }));
@@ -212,6 +215,9 @@ export async function exportToPDF(elementId: string, filename: string) {
 }
 
 export async function createGoogleForm(quiz: Quiz, accessToken: string) {
+  if (!quiz || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+    throw new Error("Tidak ada data soal untuk diekspor ke Google Forms.");
+  }
   // 1. Create the Form
   const createResponse = await fetch('https://forms.googleapis.com/v1/forms', {
     method: 'POST',
@@ -221,8 +227,8 @@ export async function createGoogleForm(quiz: Quiz, accessToken: string) {
     },
     body: JSON.stringify({
       info: {
-        title: quiz.title,
-        documentTitle: quiz.title,
+        title: quiz.title || "Soal Ujian BoimSmart",
+        documentTitle: quiz.title || "Soal Ujian BoimSmart",
       },
     }),
   });
@@ -329,8 +335,8 @@ export async function createGoogleForm(quiz: Quiz, accessToken: string) {
 }
 
 export function generateGoogleFormScript(quiz: Quiz) {
-// ... existing code
-  let code = `function createQuizForm() {\n  var form = FormApp.create(${JSON.stringify(quiz.title)});\n  form.setIsQuiz(true);\n\n`;
+  if (!quiz || !Array.isArray(quiz.questions)) return '';
+  let code = `function createQuizForm() {\n  var form = FormApp.create(${JSON.stringify(quiz.title || "Soal Ujian")});\n  form.setIsQuiz(true);\n\n`;
   
   quiz.questions.forEach((q: Question) => {
     if (q.options && q.options.length > 0) {

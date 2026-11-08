@@ -68,7 +68,7 @@ Output: JSON valid schema.`;
   const parts = [{ text: userTextContent }];
 
   if (config.attachedFile) {
-    if (config.attachedFile.mimeType.startsWith('image/')) {
+    if (config.attachedFile.mimeType.startsWith('image/') || config.attachedFile.mimeType === 'application/pdf') {
       parts.push({
         //@ts-ignore
         inlineData: {
@@ -77,7 +77,7 @@ Output: JSON valid schema.`;
         }
       });
     } else {
-      parts[0].text += `\n\n[MATER UTAMA DARI FILE: ${config.attachedFile.name}]`;
+      parts[0].text += `\n\n[MATERI DARI FILE: ${config.attachedFile.name}]`;
     }
   }
 

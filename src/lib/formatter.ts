@@ -1,19 +1,20 @@
 import { Quiz, Question } from "../types";
 
 export function formatQuizToMarkdown(quiz: Quiz, showKey: boolean = false): string {
-  let md = `## 📝 ${quiz.title}\n`;
-  md += `*Mata Pelajaran: ${quiz.subject} | Jenjang: ${quiz.gradeClass}*\n\n---\n\n`;
+  if (!quiz || !Array.isArray(quiz.questions)) return '';
+  let md = `## 📝 ${quiz.title || 'Soal Ujian'}\n`;
+  md += `*Mata Pelajaran: ${quiz.subject || '-'} | Jenjang: ${quiz.gradeClass || '-'}*\n\n---\n\n`;
 
-  const trueFalseQuestions = quiz.questions.filter((q: Question) => q.type === 'Benar / Salah');
-  const matchingQuestions = quiz.questions.filter((q: Question) => q.type === 'Mencocokkan');
-  const otherQuestions = quiz.questions.filter((q: Question) => q.type !== 'Benar / Salah' && q.type !== 'Mencocokkan');
+  const trueFalseQuestions = (quiz.questions || []).filter((q: Question) => q.type === 'Benar / Salah');
+  const matchingQuestions = (quiz.questions || []).filter((q: Question) => q.type === 'Mencocokkan');
+  const otherQuestions = (quiz.questions || []).filter((q: Question) => q.type !== 'Benar / Salah' && q.type !== 'Mencocokkan');
 
   let qNum = 1;
 
   // 1. Regular Questions (PG & Essay)
   if (otherQuestions.length > 0) {
     otherQuestions.forEach((q: Question) => {
-      md += `**${qNum}.** ${q.questionText} *(${q.type})*\n`;
+      md += `**${qNum}.** ${q.questionText} *(${q.type || 'Pilihan Ganda'})*\n`;
       if (q.options && q.options.length > 0) {
         q.options.forEach((opt: string, idx: number) => {
           md += `   ${String.fromCharCode(65 + idx)}. ${opt}\n`;
@@ -87,10 +88,10 @@ export function formatQuizToMarkdown(quiz: Quiz, showKey: boolean = false): stri
   }
 
   // 4. Answer Key
-  if (showKey && quiz.includeKey) {
+  if (showKey && quiz.includeKey && Array.isArray(quiz.questions)) {
     md += `---\n### 🔑 KUNCI JAWABAN & PEMBAHASAN\n\n`;
     quiz.questions.forEach((q: Question, idx: number) => {
-      md += `**${idx + 1}. Jawaban:** \`${q.correctAnswer}\`  \n`;
+      md += `**${idx + 1}. Jawaban:** \`${q.correctAnswer || '-'}\`  \n`;
       if (q.explanation) md += `*Pembahasan:* ${q.explanation}\n\n`;
     });
   }

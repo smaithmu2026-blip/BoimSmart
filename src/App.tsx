@@ -65,7 +65,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { auth, db, googleProvider } from './lib/firebase';
+import { auth, db, googleProvider, googleFormsProvider } from './lib/firebase';
+
 import { generateExam } from './lib/gemini';
 import { exportToWord, createGoogleForm } from './lib/exports';
 import { Quiz, Question, AttachedFile, GenerateConfig } from './types';
@@ -156,11 +157,13 @@ const SidebarSection = ({ title, children }: { title: string, children: React.Re
 const DashboardView = ({ 
   quizzes, 
   onViewQuiz,
-  onDelete
+  onDelete,
+  onNavigate
 }: { 
   quizzes: Quiz[], 
   onViewQuiz: (q: Quiz) => void,
-  onDelete: (id: string) => void
+  onDelete: (id: string) => void,
+  onNavigate: (view: 'dashboard' | 'generator' | 'history') => void
 }) => {
 
   const stats = [
@@ -216,7 +219,10 @@ const DashboardView = ({
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-slate-900">Aktivitas Terakhir</h3>
-            <button className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition flex items-center gap-1">
+            <button 
+              onClick={() => onNavigate('history')}
+              className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition flex items-center gap-1"
+            >
               Lihat Semua <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -232,7 +238,7 @@ const DashboardView = ({
                   <p className="text-slate-500 text-sm">Mulai buat soal pertama Anda dengan AI Generator.</p>
                 </div>
                 <button 
-                  onClick={() => onViewQuiz({} as any)} 
+                  onClick={() => onNavigate('generator')} 
                   className="text-sm font-bold text-indigo-600 bg-indigo-50 px-6 py-2.5 rounded-xl hover:bg-indigo-100 transition"
                 >
                   Buat Soal Sekarang
@@ -261,7 +267,8 @@ const DashboardView = ({
                         e.stopPropagation();
                         q.id && onDelete(q.id);
                       }}
-                      className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      className="p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                      title="Hapus Soal"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -350,9 +357,22 @@ export default function App() {
   const [isExportingGForm, setIsExportingGForm] = useState(false);
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type?: 'info' | 'success' | 'error'; link?: string; linkText?: string } | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info', link?: string, linkText?: string) => {
+    setToast({ message, type, link, linkText });
+  };
+
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -377,7 +397,12 @@ export default function App() {
         });
         return unsubSnap;
       } else {
-        setQuizzes([]);
+        try {
+          const stored = JSON.parse(localStorage.getItem('guest_quizzes') || '[]');
+          setQuizzes(stored);
+        } catch (e) {
+          setQuizzes([]);
+        }
       }
     });
     return () => unsubscribe();
@@ -396,10 +421,16 @@ export default function App() {
       if (credential?.accessToken) {
         setAccessToken(credential.accessToken);
       }
-    } catch (err) {
+      showToast("Berhasil login dengan Akun Google!", "success");
+    } catch (err: any) {
       console.error("Login error", err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        return; // User intentionally closed the popup
+      }
+      showToast(`Gagal login Google: ${err.message || 'Silakan coba lagi.'}`, "error");
     }
   };
+
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -441,6 +472,7 @@ export default function App() {
       const result = await generateExam(currentConfig);
       const quiz: Quiz = {
         ...result,
+        id: `local_${Date.now()}`,
         gradeClass: currentConfig.gradeClass,
         includeKey: currentConfig.includeKey,
         createdAt: new Date().toISOString(),
@@ -448,14 +480,23 @@ export default function App() {
       };
 
       if (user) {
-        // Remove createdAt from the spread object to avoid type conflict with serverTimestamp
-        const { createdAt, ...quizData } = quiz;
-        await addDoc(collection(db, 'users', user.uid, 'quizzes'), {
+        // Remove createdAt and temporary id from the spread object to avoid type conflict with serverTimestamp
+        const { createdAt, id: _tempId, ...quizData } = quiz;
+        const docRef = await addDoc(collection(db, 'users', user.uid, 'quizzes'), {
           ...quizData,
           createdAt: serverTimestamp()
         });
+        quiz.id = docRef.id;
+      } else {
+        try {
+          const stored = JSON.parse(localStorage.getItem('guest_quizzes') || '[]');
+          const updated = [quiz, ...stored];
+          localStorage.setItem('guest_quizzes', JSON.stringify(updated));
+          setQuizzes(updated);
+        } catch (e) {
+          setQuizzes(prev => [quiz, ...prev]);
+        }
       }
-
 
       setCurrentQuiz(quiz);
       setMessages(prev => [...prev, { 
@@ -480,23 +521,60 @@ export default function App() {
   };
 
   const handleDeleteQuiz = async (quizId: string) => {
-    if (!user || !quizId) return;
-    if (!window.confirm("Apakah Anda yakin ingin menghapus soal ini dari riwayat?")) return;
+    if (!quizId) return;
 
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'quizzes', quizId));
-    } catch (err) {
+      // 1. Delete from Firestore if user is authenticated and not a local item
+      if (user && !quizId.startsWith('local_')) {
+        await deleteDoc(doc(db, 'users', user.uid, 'quizzes', quizId));
+      }
+      
+      // 2. Also remove from guest storage if exists
+      try {
+        const stored = JSON.parse(localStorage.getItem('guest_quizzes') || '[]');
+        const updated = stored.filter((q: Quiz) => q.id !== quizId);
+        localStorage.setItem('guest_quizzes', JSON.stringify(updated));
+      } catch (e) {}
+
+      // 3. Immediately update UI state
+      setQuizzes(prev => prev.filter(q => q.id !== quizId));
+      showToast("Soal berhasil dihapus dari riwayat.", "success");
+    } catch (err: any) {
       console.error("Delete error", err);
-      alert("Gagal menghapus soal.");
+      setQuizzes(prev => prev.filter(q => q.id !== quizId));
+      showToast("Soal dihapus dari tampilan riwayat.", "info");
+    }
+  };
+
+  const handleClearAllQuizzes = async () => {
+    if (quizzes.length === 0) return;
+
+    try {
+      if (user) {
+        for (const q of quizzes) {
+          if (q.id && !q.id.startsWith('local_')) {
+            await deleteDoc(doc(db, 'users', user.uid, 'quizzes', q.id)).catch(() => {});
+          }
+        }
+      }
+      try {
+        localStorage.removeItem('guest_quizzes');
+      } catch (e) {}
+      setQuizzes([]);
+      showToast("Semua riwayat soal berhasil dibersihkan.", "success");
+    } catch (err) {
+      setQuizzes([]);
+      showToast("Riwayat soal telah dibersihkan.", "info");
     }
   };
 
   const handleReset = () => {
-    if (messages.length > 0 && !window.confirm("Bersihkan percakapan dan reset pengaturan?")) return;
     setMessages([]);
     setAttachedFile(null);
     setConfig(INITIAL_CONFIG);
     setCurrentQuiz(null);
+    setCurrentView('generator');
+    showToast("Menu Reset aktif: Form dan percakapan berhasil direset bersih!", "success");
   };
 
 
@@ -584,6 +662,11 @@ export default function App() {
                   onClick={() => { setCurrentView('history'); setIsSidebarOpen(false); }} 
                   badge={quizzes.length.toString()}
                 />
+                <SidebarItem 
+                  icon={RotateCcw} 
+                  label="Reset Sesi" 
+                  onClick={() => { handleReset(); setIsSidebarOpen(false); }} 
+                />
               </motion.div>
             </SidebarSection>
 
@@ -647,6 +730,14 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button 
+              onClick={handleReset}
+              title="Reset Form dan Generator"
+              className="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-indigo-600 rounded-lg transition-all flex items-center gap-1.5 active:scale-95 border border-slate-200"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
             {currentView !== 'generator' && (
               <button 
                 onClick={() => setCurrentView('generator')}
@@ -678,11 +769,13 @@ export default function App() {
                   <DashboardView 
                     quizzes={quizzes} 
                     onViewQuiz={(q) => {
+                      if (!q || !Array.isArray(q.questions)) return;
                       setCurrentQuiz(q);
                       setMessages([{ role: 'model', text: formatQuizToMarkdown(q), quiz: q }]);
                       setCurrentView('generator');
                     }} 
                     onDelete={handleDeleteQuiz}
+                    onNavigate={(view) => setCurrentView(view)}
                   />
 
                 </motion.div>
@@ -706,9 +799,10 @@ export default function App() {
                     <div className="flex gap-2">
                        <button 
                          onClick={handleReset}
-                         className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all active:scale-95"
+                         className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all active:scale-95 border border-slate-200 shadow-sm"
+                         title="Reset Form & Percakapan"
                        >
-                         <RotateCcw className="w-4 h-4" /> Reset
+                         <RotateCcw className="w-4 h-4 text-indigo-600" /> Reset Form
                        </button>
                     </div>
                   </div>
@@ -861,7 +955,14 @@ export default function App() {
                                       <Gamepad2 className="w-4 h-4" /> KERJAKAN SOAL
                                     </button>
                                     <button 
-                                      onClick={() => exportToWord(m.quiz!)}
+                                      onClick={async () => {
+                                        try {
+                                          await exportToWord(m.quiz!);
+                                          showToast("Soal berhasil diekspor ke format Word (.docx)!", "success");
+                                        } catch (err: any) {
+                                          showToast(`Gagal ekspor ke Word: ${err.message || 'Terjadi kesalahan'}`, "error");
+                                        }
+                                      }}
                                       className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] px-5 py-2.5 rounded-xl font-black flex items-center gap-2 transition-all active:scale-95"
                                     >
                                       <FileText className="w-4 h-4" /> WORD (DOCX)
@@ -872,19 +973,30 @@ export default function App() {
                                         let currentToken = accessToken;
                                         if (!currentToken) {
                                           try {
-                                            const result = await signInWithPopup(auth, googleProvider);
+                                            const result = await signInWithPopup(auth, googleFormsProvider);
                                             const credential = GoogleAuthProvider.credentialFromResult(result);
                                             if (credential?.accessToken) {
                                               currentToken = credential.accessToken;
                                               setAccessToken(currentToken);
-                                            } else throw new Error("Gagal mendapatkan token.");
-                                          } catch (e) { alert("Izin Google diperlukan."); return; }
+                                            } else throw new Error("Gagal mendapatkan token izin Google Forms.");
+                                          } catch (e: any) { 
+                                            showToast(`Izin Google Forms diperlukan: ${e.message || 'Akses dibatalkan'}`, "error"); 
+                                            return; 
+                                          }
                                         }
                                         setIsExportingGForm(true);
+
                                         try {
                                           const url = await createGoogleForm(m.quiz!, currentToken!);
-                                          window.open(url, '_blank');
-                                        } catch (err: any) { alert(err.message); } finally { setIsExportingGForm(false); }
+                                          try {
+                                            window.open(url, '_blank');
+                                          } catch (e) {}
+                                          showToast("Google Form berhasil dibuat!", "success", url, "Buka Google Form");
+                                        } catch (err: any) { 
+                                          showToast(`Gagal membuat Google Form: ${err.message || 'Terjadi kesalahan'}`, "error"); 
+                                        } finally { 
+                                          setIsExportingGForm(false); 
+                                        }
                                       }}
                                       className={cn(
                                         "bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] px-5 py-2.5 rounded-xl font-black flex items-center gap-2 transition-all shadow-lg shadow-indigo-100 active:scale-95",
@@ -993,62 +1105,98 @@ export default function App() {
                   className="space-y-6"
                 >
 
-                  <div>
-                    <h2 className="text-2xl font-black text-slate-900">Riwayat Soal</h2>
-                    <p className="text-sm text-slate-500">Akses kembali soal-soal yang telah Anda buat sebelumnya.</p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-2xl font-black text-slate-900">Riwayat Soal</h2>
+                      <p className="text-sm text-slate-500">Akses dan kelola kembali soal-soal yang telah Anda buat sebelumnya.</p>
+                    </div>
+                    {quizzes.length > 0 && (
+                      <button 
+                        onClick={handleClearAllQuizzes}
+                        className="self-start sm:self-auto px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 border border-rose-200 shadow-sm"
+                        title="Hapus semua riwayat soal"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                        <span>Hapus Semua Riwayat</span>
+                      </button>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {quizzes.map((q, i) => (
-                      <div key={i} className="premium-card p-6 flex flex-col gap-4 relative group">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            q.id && handleDeleteQuiz(q.id);
-                          }}
-                          className="absolute top-4 right-4 p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
-                          title="Hapus Soal"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="space-y-1">
-                            <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-1 pr-8">{q.title}</h4>
-                            <div className="flex items-center gap-2 text-[11px] text-slate-500 font-bold uppercase tracking-wider">
-                              <span>{q.subject}</span>
-                              <span aria-hidden="true">·</span>
-                              <span>{q.gradeClass}</span>
+                  {quizzes.length === 0 ? (
+                    <div className="premium-card p-12 flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center shadow-inner">
+                        <History className="w-10 h-10 text-slate-300" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-slate-900 font-bold">Belum ada riwayat soal</p>
+                        <p className="text-slate-500 text-sm">Semua soal yang Anda buat akan tersimpan otomatis di sini.</p>
+                      </div>
+                      <button 
+                        onClick={() => setCurrentView('generator')} 
+                        className="text-sm font-bold text-indigo-600 bg-indigo-50 px-6 py-2.5 rounded-xl hover:bg-indigo-100 transition"
+                      >
+                        Buat Soal Sekarang
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {quizzes.map((q, i) => (
+                        <div key={i} className="premium-card p-6 flex flex-col gap-4 relative group">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              q.id && handleDeleteQuiz(q.id);
+                            }}
+                            className="absolute top-4 right-4 p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all z-10"
+                            title="Hapus Soal"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="space-y-1">
+                              <h4 className="font-bold text-slate-900 text-lg leading-tight line-clamp-1 pr-8">{q.title}</h4>
+                              <div className="flex items-center gap-2 text-[11px] text-slate-500 font-bold uppercase tracking-wider">
+                                <span>{q.subject}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>{q.gradeClass}</span>
+                              </div>
+                            </div>
+                            <div className="text-right text-[10px] text-slate-400 font-medium">
+                              {new Date(q.createdAt).toLocaleDateString()}
                             </div>
                           </div>
-                          <div className="text-right text-[10px] text-slate-400 font-medium">
-                            {new Date(q.createdAt).toLocaleDateString()}
+                          <div className="flex flex-wrap gap-2 pt-1">
+                             <button 
+                               onClick={() => {
+                                 setCurrentQuiz(q);
+                                 setMessages([{ role: 'model', text: formatQuizToMarkdown(q), quiz: q }]);
+                                 setCurrentView('generator');
+                               }}
+                               className="flex-1 min-w-[130px] bg-slate-900 text-white text-[11px] font-black py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-slate-800 transition active:scale-95"
+                             >
+                               <Sparkles className="w-4 h-4 text-amber-400" /> Buka di Generator
+                             </button>
+                             <button 
+                               onClick={() => {
+                                 setCurrentQuiz(q);
+                                 setShowQuizModal(true);
+                               }}
+                               className="px-4 bg-emerald-50 text-emerald-700 text-[11px] font-black py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-100 transition active:scale-95 border border-emerald-100"
+                             >
+                               <Gamepad2 className="w-4 h-4" /> Kerjakan
+                             </button>
+                             <button 
+                               onClick={() => q.id && handleDeleteQuiz(q.id)}
+                               className="px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-black py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95 border border-rose-200"
+                               title="Hapus soal ini"
+                             >
+                               <Trash2 className="w-3.5 h-3.5" /> Hapus
+                             </button>
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                           <button 
-                             onClick={() => {
-                               setCurrentQuiz(q);
-                               setMessages([{ role: 'model', text: formatQuizToMarkdown(q), quiz: q }]);
-                               setCurrentView('generator');
-                             }}
-                             className="flex-1 bg-slate-900 text-white text-[11px] font-black py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-slate-800 transition"
-                           >
-                             <Sparkles className="w-4 h-4 text-amber-400" /> Buka di Generator
-                           </button>
-                           <button 
-                             onClick={() => {
-                               setCurrentQuiz(q);
-                               setShowQuizModal(true);
-                             }}
-                             className="px-4 bg-emerald-50 text-emerald-700 text-[11px] font-black py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-100 transition"
-                           >
-                             <Gamepad2 className="w-4 h-4" /> Kerjakan
-                           </button>
-                        </div>
-                      </div>
-                    ))}
-
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1076,6 +1224,43 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className={cn(
+              "fixed bottom-6 right-6 z-[200] max-w-md p-4 rounded-2xl shadow-2xl flex items-center gap-3 border backdrop-blur-md",
+              toast.type === 'error' ? "bg-rose-900/90 text-white border-rose-700 shadow-rose-900/20" :
+              toast.type === 'success' ? "bg-emerald-900/90 text-white border-emerald-700 shadow-emerald-900/20" :
+              "bg-slate-900/90 text-white border-slate-700 shadow-slate-900/20"
+            )}
+          >
+            {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />}
+            {toast.type === 'success' && <CheckCircle className="w-5 h-5 text-emerald-400 flex-shrink-0" />}
+            {toast.type === 'info' && <Sparkles className="w-5 h-5 text-indigo-400 flex-shrink-0" />}
+            <div className="flex-1 text-xs font-semibold leading-relaxed">
+              <p>{toast.message}</p>
+              {toast.link && (
+                <a
+                  href={toast.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 font-bold text-amber-300 underline hover:text-amber-200"
+                >
+                  {toast.linkText || "Buka Tautan"} &rarr;
+                </a>
+              )}
+            </div>
+            <button onClick={() => setToast(null)} className="text-white/60 hover:text-white p-1">
+              <XCircle className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
@@ -1086,10 +1271,10 @@ const QuizModal = ({ quiz, onClose }: { quiz: Quiz, onClose: () => void }) => {
 
   const calculateScore = () => {
     let score = 0;
-    quiz.questions.forEach(q => {
+    (quiz.questions || []).forEach(q => {
       const userAns = (answers[q.id] || "").toLowerCase().trim();
-      const correctAns = q.correctAnswer.toLowerCase().trim();
-      if (userAns && (userAns.includes(correctAns) || correctAns.includes(userAns))) {
+      const correctAns = (q.correctAnswer || "").toLowerCase().trim();
+      if (userAns && correctAns && (userAns.includes(correctAns) || correctAns.includes(userAns))) {
         score++;
       }
     });
@@ -1195,13 +1380,13 @@ const QuizModal = ({ quiz, onClose }: { quiz: Quiz, onClose: () => void }) => {
                       animate={{ opacity: 1, height: 'auto' }}
                       className={cn(
                         "p-5 rounded-2xl text-sm font-bold border",
-                        (answers[q.id] || "").toLowerCase().trim() === q.correctAnswer.toLowerCase().trim() 
+                        (answers[q.id] || "").toLowerCase().trim() === (q.correctAnswer || "").toLowerCase().trim() 
                           ? "bg-emerald-50 text-emerald-800 border-emerald-100" 
                           : "bg-rose-50 text-rose-800 border-rose-100"
                       )}
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        { (answers[q.id] || "").toLowerCase().trim() === q.correctAnswer.toLowerCase().trim() ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" /> }
+                        { (answers[q.id] || "").toLowerCase().trim() === (q.correctAnswer || "").toLowerCase().trim() ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" /> }
                         <span>Kunci Jawaban: {q.correctAnswer}</span>
                       </div>
                       {q.explanation && (
@@ -1229,7 +1414,7 @@ const QuizModal = ({ quiz, onClose }: { quiz: Quiz, onClose: () => void }) => {
             <div className="flex items-center gap-6">
               <div className="text-right">
                 <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Skor Anda</span>
-                <span className="text-3xl font-black text-slate-900">{calculateScore()} <span className="text-slate-300 text-lg font-bold">/ {quiz.questions.length}</span></span>
+                <span className="text-3xl font-black text-slate-900">{calculateScore()} <span className="text-slate-300 text-lg font-bold">/ {(quiz.questions || []).length}</span></span>
               </div>
               <button 
                 onClick={onClose}
@@ -1241,8 +1426,13 @@ const QuizModal = ({ quiz, onClose }: { quiz: Quiz, onClose: () => void }) => {
           ) : (
             <button 
               onClick={() => {
-                const unanswered = quiz.questions.length - Object.keys(answers).length;
-                if (unanswered > 0 && !window.confirm(`Ada ${unanswered} soal belum dijawab. Kumpulkan?`)) return;
+                const totalQuestions = (quiz.questions || []).length;
+                const unanswered = totalQuestions - Object.keys(answers).length;
+                if (unanswered > 0) {
+                  try {
+                    if (!window.confirm(`Ada ${unanswered} soal belum dijawab. Kumpulkan nilai sekarang?`)) return;
+                  } catch (e) {}
+                }
                 setShowResults(true);
               }}
               className="px-10 py-3 rounded-2xl bg-indigo-600 text-white font-black text-sm shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95"
